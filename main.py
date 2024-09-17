@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
 from litellm import acompletion
 from starlette.middleware.base import BaseHTTPMiddleware
+import json
 
 import asyncio
 import litellm
@@ -15,23 +16,6 @@ app = FastAPI()
 # Define input structure using Pydantic
 class ChatRequest(BaseModel):
     message: str
-
-
-# Custom middleware to disable Gzip for the /chat route
-class DisableGzipMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-        if request.url.path.startswith("/chat"):
-            # Remove 'Content-Encoding' from the headers if it's Gzip
-            if "Content-Encoding" in response.headers and response.headers["Content-Encoding"] == "gzip":
-                del response.headers["Content-Encoding"]
-            # Set connection to keep-alive for streaming
-            response.headers["Connection"] = "keep-alive"
-        return response
-
-
-# Add the custom middleware to FastAPI
-app.add_middleware(DisableGzipMiddleware)
 
 
 # Streaming response with proper headers and no Gzip
@@ -55,10 +39,11 @@ async def async_ollama(user_message: str):
         # Yield each chunk of the response
         async for chunk in response:
             if 'choices' in chunk and chunk.choices[0].delta.content:
-                yield f"data: {chunk.choices[0].delta.content} \n\n"
+                json_chunk = json.dumps({"data": chunk.choices[0].delta.content})
+                yield f"{json_chunk}\n"  # Flush the chunk with a newline
 
     except Exception as e:
-        yield f"Error: {str(e)}"
+        yield json.dumps({"error": str(e)})
 
 
 # FastAPI route for handling chat requests
@@ -73,7 +58,7 @@ async def chat_stream(request: ChatRequest):
                 "Transfer-Encoding": "chunked",
                 "X-Content-Type-Options": "nosniff"
             },
-            media_type="text/event-stream"
+            media_type="application/json"
         )
 
         return response
